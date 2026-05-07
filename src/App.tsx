@@ -47,18 +47,17 @@ export default function App() {
   const isAuthenticated = useIsAuthenticated();
   const [state, setState] = useState<AppState>('idle');
   const [result, setResult] = useState<ProcessResponse | null>(null);
+  const [originalFile, setOriginalFile] = useState<File | null>(null);
   const [error, setError] = useState('');
 
   async function handleLogin() {
-    // loginRedirect: navigate cùng tab sang Microsoft login,
-    // sau khi xong Microsoft redirect về app, handleRedirectPromise()
-    // trong main.tsx xử lý token tự động.
     await instance.loginRedirect(loginRequest);
   }
 
   async function handleFile(file: File) {
     setState('processing');
     setError('');
+    setOriginalFile(file);
     const form = new FormData();
     form.append('file', file);
     try {
@@ -75,6 +74,12 @@ export default function App() {
     }
   }
 
+  function handleReset() {
+    setResult(null);
+    setOriginalFile(null);
+    setState('idle');
+  }
+
   if (!isAuthenticated)
     return <LoginGate onLogin={handleLogin} />;
 
@@ -84,12 +89,13 @@ export default function App() {
   if (state === 'processing')
     return <ProcessingState />;
 
-  if (state === 'done' && result)
+  if (state === 'done' && result && originalFile)
     return (
       <ResultPanel
         result={result}
+        originalFile={originalFile}
         msalInstance={instance as IPublicClientApplication}
-        onReset={() => { setResult(null); setState('idle'); }}
+        onReset={handleReset}
       />
     );
 
