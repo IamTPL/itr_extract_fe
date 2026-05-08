@@ -1,21 +1,23 @@
 import { JobStatus } from '../lib/constants';
 
 const LABEL: Record<JobStatus, string> = {
-  [JobStatus.PENDING]:    'Đang chờ',
-  [JobStatus.PROCESSING]: 'Đang xử lý',
-  [JobStatus.SUCCESS]:    'Hoàn tất',
-  [JobStatus.FAILED]:     'Thất bại',
+  [JobStatus.PENDING]:    'Pending',
+  [JobStatus.PROCESSING]: 'Processing',
+  [JobStatus.SUCCESS]:    'Completed',
+  [JobStatus.FAILED]:     'Failed',
 };
-const COLOR: Record<JobStatus, string> = {
-  [JobStatus.PENDING]:    '#888',
-  [JobStatus.PROCESSING]: '#0a7',
-  [JobStatus.SUCCESS]:    '#0a0',
-  [JobStatus.FAILED]:     '#c33',
+
+const VARIANT: Record<JobStatus, string> = {
+  [JobStatus.PENDING]:    'status-badge--muted',
+  [JobStatus.PROCESSING]: 'status-badge--warning',
+  [JobStatus.SUCCESS]:    'status-badge--success',
+  [JobStatus.FAILED]:     'status-badge--error',
 };
 
 export function JobStatusBadge({ status }: { status: JobStatus }) {
   return (
-    <span style={{ color: COLOR[status], fontWeight: 600 }}>
+    <span className={`status-badge ${VARIANT[status]}`}>
+      <span className="status-badge__dot" />
       {LABEL[status]}
     </span>
   );

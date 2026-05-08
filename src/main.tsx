@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { MsalProvider } from '@azure/msal-react';
 import { PublicClientApplication } from '@azure/msal-browser';
 import { msalConfig } from './lib/msalConfig';
+import { ToastProvider } from './lib/toast';
 import App from './App.tsx';
 import './index.css';
 
@@ -16,7 +17,9 @@ msalInstance.initialize().then(async () => {
   createRoot(document.getElementById('root')!).render(
     <StrictMode>
       <MsalProvider instance={msalInstance}>
-        <App />
+        <ToastProvider>
+          <App />
+        </ToastProvider>
       </MsalProvider>
     </StrictMode>,
   );

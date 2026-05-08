@@ -1,21 +1,21 @@
 import type { Configuration, PopupRequest } from '@azure/msal-browser';
 
 // ─────────────────────────────────────────────────────────────────
-// AUTHORITY — đổi giá trị này khi chuyển môi trường:
+// MODE SWITCH — TỰ ĐỘNG theo VITE_MSAL_TENANT_ID trong .env:
 //
-// TEST (hiện tại) — personal @outlook.com/@hotmail.com:
-//   authority: 'https://login.microsoftonline.com/common'
-//   App registration: multi-tenant + personal accounts
-//   Ai cũng login được, mỗi user tự consent, không cần IT admin
+//   .env không có VITE_MSAL_TENANT_ID → DEV mode
+//     authority: 'https://login.microsoftonline.com/common'
+//     Login với personal Microsoft account (outlook/hotmail) hoặc work
+//     Backend dùng ID token verify (vì personal access token là opaque)
 //
-// PRODUCTION — client doanh nghiệp (single-tenant):
-//   authority: `https://login.microsoftonline.com/${TENANT_ID_CỦA_CLIENT}`
-//   App registration: single-tenant (accounts in this org only)
-//   Chỉ nhân viên của client mới login được
-//   Cần IT admin của client grant consent 1 lần
+//   .env có VITE_MSAL_TENANT_ID → PRODUCTION mode
+//     authority: `https://login.microsoftonline.com/${TENANT_ID}`
+//     Chỉ nhân viên của tenant đó login được
+//     Backend dùng access token với custom BE scope (chuẩn OAuth2)
+//     Cần IT admin của khách hàng grant consent 1 lần
 // ─────────────────────────────────────────────────────────────────
 
-const IS_PRODUCTION = false; // ← đổi thành true khi deploy cho client
+export const IS_PRODUCTION = !!import.meta.env.VITE_MSAL_TENANT_ID;
 
 const authority = IS_PRODUCTION
   ? `https://login.microsoftonline.com/${import.meta.env.VITE_MSAL_TENANT_ID as string}`
@@ -25,20 +25,24 @@ export const msalConfig: Configuration = {
   auth: {
     clientId: import.meta.env.VITE_MSAL_CLIENT_ID as string,
     authority,
-    redirectUri: 'http://localhost:5173',
+    redirectUri: window.location.origin,
   },
   cache: {
     cacheLocation: 'sessionStorage',
   },
 };
 
-// redirectUri trỏ đến blank.html — dùng trong loginPopup call
-export const popupRedirectUri = `${window.location.origin}/blank.html`;
-
 const BE_SCOPE = `api://${import.meta.env.VITE_MSAL_BE_CLIENT_ID as string}/access_as_user`;
+const BASE_SCOPES = ['User.Read', 'Mail.ReadWrite'];
 
+// Production phải request BE_SCOPE ngay khi login để user consent một lần
+// Dev không request BE_SCOPE vì personal accounts không support custom API scope
 export const loginRequest: PopupRequest = {
-  scopes: ['User.Read', 'Mail.ReadWrite', BE_SCOPE],
+  scopes: IS_PRODUCTION ? [...BASE_SCOPES, BE_SCOPE] : BASE_SCOPES,
+  prompt: 'select_account',
 };
 
-export const beApiScopes: string[] = [BE_SCOPE];
+// Token gửi lên BE:
+//   Dev: dùng Graph scope → idToken (JWT, hoạt động cả personal & work)
+//   Prod: dùng custom BE scope → accessToken (chuẩn OAuth2)
+export const beApiScopes: string[] = IS_PRODUCTION ? [BE_SCOPE] : ['User.Read'];

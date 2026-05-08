@@ -1,7 +1,26 @@
 const BASE = import.meta.env.VITE_API_BASE_URL as string;
 
 export class ApiError extends Error {
-  constructor(public status: number, message: string) { super(message); }
+  status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.status = status;
+  }
+}
+
+/**
+ * Backend trả error dưới dạng `{"detail": "..."}`. Cố gắng parse JSON trước,
+ * fallback về raw text để không nuốt thông tin debug.
+ */
+async function parseErrorMessage(res: Response): Promise<string> {
+  const text = await res.text().catch(() => '');
+  if (!text) return res.statusText || `HTTP ${res.status}`;
+  try {
+    const data = JSON.parse(text);
+    if (typeof data?.detail === 'string') return data.detail;
+    if (Array.isArray(data?.detail)) return data.detail.map((d: { msg?: string }) => d.msg ?? '').join('; ');
+  } catch { /* not JSON */ }
+  return text;
 }
 
 export async function apiFetch(
@@ -14,7 +33,9 @@ export async function apiFetch(
     ...init,
     headers: { ...(init.headers ?? {}), Authorization: `Bearer ${token}` },
   });
-  if (!res.ok) throw new ApiError(res.status, await res.text().catch(() => ''));
+  if (!res.ok) {
+    throw new ApiError(res.status, await parseErrorMessage(res));
+  }
   return res;
 }
 
