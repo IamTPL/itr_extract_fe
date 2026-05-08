@@ -47,7 +47,13 @@ function AuthenticatedApp() {
   }, [job?.job_id, job?.status, refresh]);
 
   async function handleLogout() {
-    await instance.logoutRedirect({ postLogoutRedirectUri: window.location.origin });
+    // App-only logout: clear MSAL cache local (sessionStorage + tokens) NHƯNG
+    // KHÔNG đụng đến Microsoft SSO cookie. Outlook/Teams/M365 apps khác giữ session.
+    await instance.clearCache({ account: accounts[0] });
+    // MSAL v5 clearCache không emit ACCOUNT_REMOVED event đến msal-react context →
+    // useIsAuthenticated() không tự re-evaluate. Force reload để render LoginGate
+    // với state hoàn toàn sạch (xóa cả Toast, useJobs cache trong React tree).
+    window.location.reload();
   }
 
   return (
