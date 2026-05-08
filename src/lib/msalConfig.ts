@@ -35,7 +35,10 @@ export const msalConfig: Configuration = {
 // redirectUri trỏ đến blank.html — dùng trong loginPopup call
 export const popupRedirectUri = `${window.location.origin}/blank.html`;
 
+const BE_SCOPE = `api://${import.meta.env.VITE_MSAL_BE_CLIENT_ID as string}/access_as_user`;
+
 export const loginRequest: PopupRequest = {
-  scopes: ['User.Read', 'Mail.ReadWrite'],
-  prompt: 'select_account',
+  scopes: ['User.Read', 'Mail.ReadWrite', BE_SCOPE],
 };
+
+export const beApiScopes: string[] = [BE_SCOPE];
