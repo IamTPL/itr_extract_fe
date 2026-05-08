@@ -37,4 +37,5 @@ export const popupRedirectUri = `${window.location.origin}/blank.html`;
 
 export const loginRequest: PopupRequest = {
   scopes: ['User.Read', 'Mail.ReadWrite'],
+  prompt: 'select_account',
 };
