@@ -131,7 +131,7 @@ export function JobDetailView({ job }: { job: JobDetail }) {
     setDraftError('');
     const currentHtml = sanitizeEmailHtml(emailRef.current?.innerHTML ?? email_html);
     const subject = `${taxYear} Income Tax Return — ${clientName}`;
-    const fileName = `Econsent_${clientName.replace(/\s+/g, '_')}.pdf`;
+    const fileName = 'Econsent.pdf';
     try {
       const draft = await createOutlookDraft(instance, toEmail, subject, currentHtml, econsentB64, fileName);
       setDraftLink(draft.webLink);
@@ -157,7 +157,7 @@ export function JobDetailView({ job }: { job: JobDetail }) {
     const url = URL.createObjectURL(new Blob([arr], { type: 'application/pdf' }));
     const a = document.createElement('a');
     a.href = url;
-    a.download = `Econsent_${clientName.replace(/\s+/g, '_')}.pdf`;
+    a.download = 'Econsent.pdf';
     a.click();
     URL.revokeObjectURL(url);
   }

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useIsAuthenticated, useMsal } from '@azure/msal-react';
 import { UploadCard } from './components/UploadCard';
 import { JobHistory } from './components/JobHistory';
@@ -31,13 +31,20 @@ function LoginGate({ onLogin }: { onLogin: () => void }) {
 
 function AuthenticatedApp() {
   const { instance, accounts } = useMsal();
-  const { jobs, createJob, reprocess, deleteJob } = useJobs();
+  const { jobs, refresh, createJob, reprocess, deleteJob } = useJobs();
   const [selected, setSelected] = useState<string | null>(null);
   const [pollingKey, setPollingKey] = useState(0);
   const { job, timedOut } = useJobPolling(selected, pollingKey);
 
   const isPending = job?.status === JobStatus.PENDING || job?.status === JobStatus.PROCESSING;
   const userName = accounts[0]?.name ?? accounts[0]?.username ?? 'User';
+
+  // Poll detail của selected job, nhưng sidebar list (`jobs`) vẫn là snapshot cũ
+  // (chỉ refresh sau create/reprocess/delete). Khi polled job đổi status →
+  // refresh sidebar để badge khớp với trạng thái thật.
+  useEffect(() => {
+    if (job?.status) refresh();
+  }, [job?.job_id, job?.status, refresh]);
 
   async function handleLogout() {
     await instance.logoutRedirect({ postLogoutRedirectUri: window.location.origin });
