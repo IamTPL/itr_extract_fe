@@ -51,7 +51,12 @@ export function JobHistory({ jobs, selectedJobId, onSelect, onReprocess, onDelet
               <div className="job-item__filename" title={j.original_filename}>
                 {j.original_filename}
               </div>
-              <JobStatusBadge status={j.status} />
+              <div className="job-item__meta">
+                <JobStatusBadge status={j.status} />
+                <span className="job-item__time">
+                  {new Date(j.created_at).toLocaleString('vi-VN', { dateStyle: 'short', timeStyle: 'short' })}
+                </span>
+              </div>
               {j.status === JobStatus.FAILED && (
                 <button
                   className="job-item__reprocess"

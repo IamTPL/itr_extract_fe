@@ -133,6 +133,20 @@ body {
   opacity: 0.3 !important;
 }
 
+.job-item__meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4rem;
+}
+
+.job-item__time {
+  font-size: 0.72rem;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+  opacity: 0.7;
+}
+
 .job-item__reprocess {
   background: none;
   border: none;
@@ -241,7 +255,8 @@ body {
 .upload-zone {
   border: 2px dashed black;
   border-radius: var(--radius-lg);
-  padding: 2.5rem;
+  padding: 1rem;
+  margin: 0 20%;
   text-align: center;
   cursor: pointer;
   transition:
