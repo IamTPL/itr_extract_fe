@@ -2,11 +2,29 @@ import { useEffect, useRef, useState } from 'react';
 import { PDFDocument } from 'pdf-lib';
 import DOMPurify from 'dompurify';
 import { useMsal } from '@azure/msal-react';
+import {
+  Bold,
+  Check,
+  CheckCircle2,
+  Download,
+  FileText,
+  Italic,
+  List,
+  ListOrdered,
+  Mail,
+  Redo2,
+  RotateCcw,
+  Send,
+  ShieldCheck,
+  Underline,
+  Undo2,
+} from 'lucide-react';
 import type { JobDetail } from '../lib/types';
 import { createOutlookDraft } from '../lib/graphApi';
 import { apiFetch } from '../lib/apiClient';
 import { useToast } from '../lib/toast';
 import { useAccessToken } from '../hooks/useAccessToken';
+import { JobStatusBadge } from './JobStatusBadge';
 
 type DraftState = 'idle' | 'creating' | 'done' | 'error';
 type DraftMode = 'combined' | 'separate';
@@ -14,6 +32,20 @@ type DraftMode = 'combined' | 'separate';
 interface DraftLink {
   label: string;
   url: string;
+}
+
+interface EconsentForm {
+  form_number: string;
+  title: string;
+  jurisdiction: string;
+  pages: number[];
+}
+
+interface AnalysisData {
+  client?: { name?: string };
+  tax_year?: string;
+  return_type?: string;
+  econsent_forms?: EconsentForm[];
 }
 
 const EMAIL_EDIT_KEY_PREFIX = 'itr.email_edit.';
@@ -36,6 +68,21 @@ function sanitizeEmailHtml(raw: string): string {
     FORBID_TAGS: ['script', 'iframe', 'object', 'embed', 'form'],
     FORBID_ATTR: ['onerror', 'onload', 'onclick'],
   });
+}
+
+function countWords(html: string): number {
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  const text = doc.body.textContent?.trim() ?? '';
+  return text ? text.split(/\s+/).length : 0;
+}
+
+function formatProcessedDate(value: string | null): string {
+  if (!value) return 'Processing';
+  return new Intl.DateTimeFormat('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  }).format(new Date(value));
 }
 
 function escapeRegExp(value: string): string {
@@ -141,9 +188,11 @@ export function JobDetailView({ job }: { job: JobDetail }) {
   const getToken = useAccessToken();
   const toast = useToast();
 
-  const forms: any[] = (job.analysis_data?.econsent_forms as any[]) ?? [];
+  const analysisData = (job.analysis_data ?? {}) as AnalysisData;
+  const forms = analysisData?.econsent_forms ?? [];
 
   const emailRef = useRef<HTMLDivElement>(null);
+  const editorSelectionRef = useRef<Range | null>(null);
   const toEmailRef = useRef<HTMLInputElement>(null);
 
   const [selectedForms, setSelectedForms] = useState<Set<number>>(
@@ -161,6 +210,11 @@ export function JobDetailView({ job }: { job: JobDetail }) {
   const [draftError, setDraftError] = useState('');
   const [draftLinks, setDraftLinks] = useState<DraftLink[]>([]);
   const [retryMissingEconsent, setRetryMissingEconsent] = useState(false);
+  const [emailSaveState, setEmailSaveState] = useState<'saved' | 'editing'>('saved');
+  const [emailWordCount, setEmailWordCount] = useState(() => {
+    const saved = localStorage.getItem(emailEditKey(job.job_id));
+    return countWords(saved ?? job.email_html ?? '');
+  });
 
   const inputBufferRef = useRef<ArrayBuffer | null>(null);
 
@@ -170,20 +224,6 @@ export function JobDetailView({ job }: { job: JobDetail }) {
     const html = saved ?? job.email_html;
     emailRef.current.innerHTML = sanitizeEmailHtml(html);
   }, [job.job_id, job.email_html]);
-
-  useEffect(() => {
-    setSelectedForms(new Set(forms.map((_, i) => i)));
-    inputBufferRef.current = null;
-    setEconsentB64(null);
-    setIsEconsentLoading(job.has_econsent && forms.length > 0);
-    setToEmail('');
-    setDraftMode('combined');
-    setDraftState('idle');
-    setDraftError('');
-    setDraftLinks([]);
-    setRetryMissingEconsent(false);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [job.job_id]);
 
   useEffect(() => {
     if (!job.has_econsent || forms.length === 0) return;
@@ -209,10 +249,9 @@ export function JobDetailView({ job }: { job: JobDetail }) {
 
   if (!job.analysis_data || !job.email_html) return null;
 
-  const analysis_data = job.analysis_data as Record<string, any>;
   const email_html = job.email_html;
-  const clientName = (analysis_data.client as any)?.name ?? 'Client';
-  const taxYear = (analysis_data.tax_year as string) ?? '';
+  const clientName = analysisData.client?.name ?? 'Client';
+  const taxYear = analysisData.tax_year ?? '';
 
   async function getInputBuffer(): Promise<ArrayBuffer> {
     if (inputBufferRef.current) return inputBufferRef.current;
@@ -238,7 +277,7 @@ export function JobDetailView({ job }: { job: JobDetail }) {
     setIsExtracting(true);
     const selectedPages = forms
       .filter((_, i) => next.has(i))
-      .flatMap((f: any) => f.pages as number[])
+      .flatMap(f => f.pages)
       .sort((a, b) => a - b);
     try {
       const buf = await getInputBuffer();
@@ -338,7 +377,50 @@ export function JobDetailView({ job }: { job: JobDetail }) {
     const html = e.currentTarget.innerHTML;
     if (html && html !== job.email_html) {
       localStorage.setItem(emailEditKey(job.job_id), html);
+    } else {
+      localStorage.removeItem(emailEditKey(job.job_id));
     }
+    setEmailSaveState('saved');
+  }
+
+  function handleEmailInput(e: React.FormEvent<HTMLDivElement>) {
+    setEmailSaveState('editing');
+    setEmailWordCount(countWords(e.currentTarget.innerHTML));
+    rememberEditorSelection();
+  }
+
+  function resetEmailChanges() {
+    if (!emailRef.current) return;
+    const originalHtml = sanitizeEmailHtml(job.email_html ?? '');
+    emailRef.current.innerHTML = originalHtml;
+    localStorage.removeItem(emailEditKey(job.job_id));
+    setEmailWordCount(countWords(originalHtml));
+    setEmailSaveState('saved');
+  }
+
+  function rememberEditorSelection() {
+    const editor = emailRef.current;
+    const selection = document.getSelection();
+    if (!editor || !selection || selection.rangeCount === 0) return;
+
+    const range = selection.getRangeAt(0);
+    if (editor.contains(range.commonAncestorContainer)) {
+      editorSelectionRef.current = range.cloneRange();
+    }
+  }
+
+  function runEditorCommand(command: string) {
+    if (!emailRef.current || isDraftCreating) return;
+    emailRef.current.focus();
+    const selection = document.getSelection();
+    if (selection && editorSelectionRef.current) {
+      selection.removeAllRanges();
+      selection.addRange(editorSelectionRef.current);
+    }
+    document.execCommand(command, false);
+    rememberEditorSelection();
+    setEmailWordCount(countWords(emailRef.current.innerHTML));
+    setEmailSaveState('editing');
   }
 
   function downloadEconsent() {
@@ -358,6 +440,10 @@ export function JobDetailView({ job }: { job: JobDetail }) {
   const isDraftCreating = draftState === 'creating';
   const isFormSelectionDisabled = isAttachmentBusy || isDraftCreating;
   const hasEconsentForms = forms.length > 0;
+  const selectedPageCount = new Set(
+    forms.filter((_, index) => selectedForms.has(index)).flatMap(form => form.pages),
+  ).size;
+  const processedDate = formatProcessedDate(job.finished_at);
   const canCreateDraft = (
     !!toEmail.trim()
     && !isAttachmentBusy
@@ -378,165 +464,264 @@ export function JobDetailView({ job }: { job: JobDetail }) {
       : draftMode === 'separate' ? 'Create 2 Outlook Drafts' : 'Create Outlook Draft';
 
   return (
-    <div>
-      <div style={{ marginBottom: '1.25rem' }}>
-        <h2 style={{ fontSize: '1.1rem', fontWeight: 600, color: 'var(--color-text)', margin: '0 0 0.2rem' }}>
-          {taxYear} ITR — {clientName}
-        </h2>
-        <p style={{ margin: 0, color: 'var(--color-text-secondary)', fontSize: '0.82rem' }}>
-          {analysis_data.return_type as string}
-        </p>
-      </div>
-
-      {forms.length > 0 && (
-        <div className="card">
-          <p className="section-label">E-Consent Forms — Select forms to include in Econsent.pdf</p>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-            {forms.map((f: any, i: number) => (
-              <label key={i} style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', cursor: isFormSelectionDisabled ? 'not-allowed' : 'pointer', fontSize: '0.88rem' }}>
-                <input
-                  type="checkbox"
-                  checked={selectedForms.has(i)}
-                  onChange={() => handleFormToggle(i)}
-                  disabled={isFormSelectionDisabled}
-                  style={{ width: '16px', height: '16px', cursor: isFormSelectionDisabled ? 'not-allowed' : 'pointer' }}
-                />
-                <span>
-                  <strong>Form {f.form_number}</strong> — {f.title}
-                  <span style={{ color: 'var(--color-text-muted)', marginLeft: '0.5rem' }}>({f.jurisdiction})</span>
-                  <span style={{ color: 'var(--color-text-muted)', marginLeft: '0.5rem', fontSize: '0.82rem' }}>pages: {(f.pages as number[]).join(', ')}</span>
-                </span>
-              </label>
-            ))}
+    <div className="return-workspace">
+      <header className="record-header">
+        <nav className="record-breadcrumb" aria-label="Breadcrumb">
+          <span>Returns</span>
+          <span aria-hidden="true">/</span>
+          <span>{job.original_filename}</span>
+        </nav>
+        <div className="record-header__title-row">
+          <div>
+            <h1>{taxYear} ITR — {clientName}</h1>
+            <div className="record-metadata">
+              <span>{analysisData.return_type ?? 'Income Tax Return'}</span>
+              <span aria-hidden="true">•</span>
+              <span>{job.original_filename}</span>
+              <span aria-hidden="true">•</span>
+              <span>Processed {processedDate}</span>
+            </div>
           </div>
-          {isExtracting && (
-            <p style={{ margin: '0.75rem 0 0', fontSize: '0.85rem', color: 'var(--color-text-secondary)' }}>Re-extracting…</p>
-          )}
-          {isEconsentLoading && (
-            <p style={{ margin: '0.75rem 0 0', fontSize: '0.85rem', color: 'var(--color-text-secondary)' }}>Loading Econsent.pdf…</p>
-          )}
-          {!isAttachmentBusy && selectedForms.size === 0 && (
-            <p style={{ margin: '0.75rem 0 0', fontSize: '0.85rem', color: 'var(--color-text-secondary)' }}>
-              No E-consent forms selected — the draft will contain the summary email only.
-            </p>
-          )}
+          <JobStatusBadge status={job.status} />
         </div>
-      )}
+      </header>
 
-      <div className={`card draft-controls ${hasEconsentForms ? '' : 'draft-controls--summary-only'}`}>
-        <div className="draft-controls__recipient">
-          <label htmlFor="draft-recipient" style={{ fontWeight: 600, fontSize: '0.9rem', whiteSpace: 'nowrap' }}>To:</label>
-          <input
-            ref={toEmailRef}
-            id="draft-recipient"
-            type="email"
-            required
-            disabled={isDraftCreating}
-            value={toEmail}
-            onChange={e => { setToEmail(e.target.value); resetDraftResult(); }}
-            placeholder="client@example.com"
-            className="input-text"
-            style={{ flex: 1, minWidth: '200px' }}
-          />
-        </div>
-        {hasEconsentForms && <fieldset
-          className="draft-controls__mode"
-          disabled={isDraftCreating}
-        >
-          <legend className="draft-controls__label">Outlook drafts</legend>
-          <div className="draft-options">
-            <label className={`draft-option ${draftMode === 'combined' ? 'draft-option--selected' : ''}`}>
-              <input
-                type="radio"
-                name={`draft-mode-${job.job_id}`}
-                value="combined"
-                checked={draftMode === 'combined'}
-                onChange={() => { setDraftMode('combined'); resetDraftResult(); }}
-              />
-              <span>
-                <strong>One email</strong>
-                <small>
-                  {isAttachmentBusy
-                    ? 'Preparing Econsent.pdf…'
-                    : econsentB64
-                      ? 'Summary + Econsent.pdf attachment'
-                      : selectedForms.size > 0
-                        ? 'Econsent.pdf is unavailable'
-                        : 'Summary only — no E-consent selected'}
-                </small>
+      <div className="return-workspace__grid">
+        <section className="email-workspace" aria-labelledby="email-preview-heading">
+          <div className="panel-heading email-workspace__heading">
+            <div>
+              <h2 id="email-preview-heading">Email Preview</h2>
+              <p>Review and edit the client message before creating the Outlook draft.</p>
+            </div>
+            <div className="email-workspace__status">
+              <span className="soft-badge soft-badge--blue">
+                <FileText size={13} aria-hidden="true" />
+                Editable
               </span>
-            </label>
-            <label
-              className={`draft-option ${draftMode === 'separate' ? 'draft-option--selected' : ''} ${!econsentB64 || isAttachmentBusy ? 'draft-option--disabled' : ''}`}
-            >
-              <input
-                type="radio"
-                name={`draft-mode-${job.job_id}`}
-                value="separate"
-                checked={draftMode === 'separate'}
-                onChange={() => { setDraftMode('separate'); resetDraftResult(); }}
-                disabled={!econsentB64 || isAttachmentBusy}
-              />
-              <span>
-                <strong>Two emails</strong>
-                <small>Summary email + separate E-consent email</small>
+              <span className={`soft-badge ${emailSaveState === 'saved' ? 'soft-badge--success' : 'soft-badge--warning'}`}>
+                {emailSaveState === 'saved'
+                  ? <Check size={13} aria-hidden="true" />
+                  : <span className="unsaved-dot" aria-hidden="true" />}
+                {emailSaveState === 'saved' ? 'Saved' : 'Unsaved'}
               </span>
-            </label>
+              <button type="button" className="text-action" onClick={resetEmailChanges} disabled={isDraftCreating}>
+                <RotateCcw size={14} aria-hidden="true" />
+                Reset changes
+              </button>
+            </div>
           </div>
-          <span className="draft-controls__hint">
-            Conflicting authorization wording is adjusted automatically to match this choice.
-          </span>
-        </fieldset>}
-        <div className="draft-controls__actions">
-          <div className="draft-controls__buttons">
+
+          <div className="editor-shell">
+            <div className="editor-toolbar" role="toolbar" aria-label="Email formatting">
+              <button type="button" aria-label="Undo" title="Undo" onMouseDown={event => event.preventDefault()} onClick={() => runEditorCommand('undo')}>
+                <Undo2 size={16} />
+              </button>
+              <button type="button" aria-label="Redo" title="Redo" onMouseDown={event => event.preventDefault()} onClick={() => runEditorCommand('redo')}>
+                <Redo2 size={16} />
+              </button>
+              <span className="editor-toolbar__divider" />
+              <button type="button" aria-label="Bold" title="Bold" onMouseDown={event => event.preventDefault()} onClick={() => runEditorCommand('bold')}>
+                <Bold size={16} />
+              </button>
+              <button type="button" aria-label="Italic" title="Italic" onMouseDown={event => event.preventDefault()} onClick={() => runEditorCommand('italic')}>
+                <Italic size={16} />
+              </button>
+              <button type="button" aria-label="Underline" title="Underline" onMouseDown={event => event.preventDefault()} onClick={() => runEditorCommand('underline')}>
+                <Underline size={16} />
+              </button>
+              <span className="editor-toolbar__divider" />
+              <button type="button" aria-label="Bulleted list" title="Bulleted list" onMouseDown={event => event.preventDefault()} onClick={() => runEditorCommand('insertUnorderedList')}>
+                <List size={16} />
+              </button>
+              <button type="button" aria-label="Numbered list" title="Numbered list" onMouseDown={event => event.preventDefault()} onClick={() => runEditorCommand('insertOrderedList')}>
+                <ListOrdered size={16} />
+              </button>
+            </div>
+            <div
+              ref={emailRef}
+              contentEditable={!isDraftCreating}
+              suppressContentEditableWarning
+              className="email-preview"
+              aria-label="Editable client email"
+              onInput={handleEmailInput}
+              onBlur={handleEmailBlur}
+              onMouseUp={rememberEditorSelection}
+              onKeyUp={rememberEditorSelection}
+            />
+            <div className="editor-footer">
+              <span>Body</span>
+              <span aria-hidden="true">•</span>
+              <span>{emailWordCount} words</span>
+              <span className="editor-footer__saved">
+                {emailSaveState === 'saved' ? 'Saved' : 'Editing'}
+                {emailSaveState === 'saved' && <CheckCircle2 size={15} aria-hidden="true" />}
+              </span>
+            </div>
+          </div>
+        </section>
+
+        <aside className="prepare-panel" aria-labelledby="prepare-outlook-heading">
+          <div className="prepare-panel__title">
+            <Mail size={21} aria-hidden="true" />
+            <h2 id="prepare-outlook-heading">Prepare Outlook Draft</h2>
+          </div>
+
+          <div className="form-field">
+            <label htmlFor="draft-recipient">Recipient</label>
+            <input
+              ref={toEmailRef}
+              id="draft-recipient"
+              type="email"
+              required
+              disabled={isDraftCreating}
+              value={toEmail}
+              onChange={event => { setToEmail(event.target.value); resetDraftResult(); }}
+              placeholder="client@example.com"
+              className="input-text"
+            />
+          </div>
+
+          {hasEconsentForms ? (
+            <fieldset className="delivery-fieldset" disabled={isDraftCreating}>
+              <legend>Delivery</legend>
+              <div className="draft-options">
+                <label className={`draft-option ${draftMode === 'combined' ? 'draft-option--selected' : ''}`}>
+                  <input
+                    type="radio"
+                    name={`draft-mode-${job.job_id}`}
+                    value="combined"
+                    checked={draftMode === 'combined'}
+                    onChange={() => { setDraftMode('combined'); resetDraftResult(); }}
+                  />
+                  <span>
+                    <strong>One email</strong>
+                    <small>
+                      {isAttachmentBusy
+                        ? 'Preparing Econsent.pdf…'
+                        : econsentB64
+                          ? 'Summary + Econsent.pdf'
+                          : selectedForms.size > 0
+                            ? 'Econsent.pdf is unavailable'
+                            : 'Summary only — no attachment'}
+                    </small>
+                  </span>
+                </label>
+                <label className={`draft-option ${draftMode === 'separate' ? 'draft-option--selected' : ''} ${!econsentB64 || isAttachmentBusy ? 'draft-option--disabled' : ''}`}>
+                  <input
+                    type="radio"
+                    name={`draft-mode-${job.job_id}`}
+                    value="separate"
+                    checked={draftMode === 'separate'}
+                    onChange={() => { setDraftMode('separate'); resetDraftResult(); }}
+                    disabled={!econsentB64 || isAttachmentBusy}
+                  />
+                  <span>
+                    <strong>Two emails</strong>
+                    <small>Separate summary and E-consent drafts</small>
+                  </span>
+                </label>
+              </div>
+            </fieldset>
+          ) : (
+            <div className="delivery-summary">
+              <span>Delivery</span>
+              <strong>One summary email</strong>
+            </div>
+          )}
+
+          <div className="prepare-section">
+            <div className="prepare-section__heading">
+              <h3>E-consent PDF</h3>
+              <span className="selection-count">{selectedForms.size} / {forms.length} selected</span>
+            </div>
+
+            {forms.length > 0 ? (
+              <div className="econsent-list">
+                {forms.map((form, index) => (
+                  <label
+                    key={`${form.form_number}-${index}`}
+                    className={`econsent-row ${selectedForms.has(index) ? 'econsent-row--selected' : ''}`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selectedForms.has(index)}
+                      onChange={() => handleFormToggle(index)}
+                      disabled={isFormSelectionDisabled}
+                    />
+                    <span className="econsent-row__content">
+                      <span className="econsent-row__topline">
+                        <strong>Form {form.form_number}</strong>
+                        <span className="jurisdiction-badge">{form.jurisdiction}</span>
+                      </span>
+                      <span className="econsent-row__title">{form.title}</span>
+                      <span className="econsent-row__pages">
+                        {form.pages.length === 1 ? 'Page' : 'Pages'} {form.pages.join(', ')}
+                      </span>
+                    </span>
+                  </label>
+                ))}
+              </div>
+            ) : (
+              <p className="empty-section-copy">No E-consent forms were detected for this return.</p>
+            )}
+
+            {isExtracting && <p className="inline-status">Rebuilding Econsent.pdf…</p>}
+            {isEconsentLoading && <p className="inline-status">Loading Econsent.pdf…</p>}
+            {!isAttachmentBusy && forms.length > 0 && selectedForms.size === 0 && (
+              <p className="inline-status inline-status--notice">
+                No forms selected. The draft will contain the summary email only.
+              </p>
+            )}
+          </div>
+
+          <div className={`attachment-card ${econsentB64 ? 'attachment-card--ready' : ''}`}>
+            <div className="attachment-card__icon"><FileText size={18} aria-hidden="true" /></div>
+            <div className="attachment-card__details">
+              <strong>{econsentB64 ? 'Econsent.pdf' : 'No attachment'}</strong>
+              <span>
+                {isAttachmentBusy
+                  ? 'Preparing PDF…'
+                  : econsentB64
+                    ? `${selectedPageCount} ${selectedPageCount === 1 ? 'page' : 'pages'} • Ready`
+                    : 'Select a form to include E-consent'}
+              </span>
+            </div>
             <button
-              className="btn btn-primary"
-              onClick={handleCreateDraft}
-              disabled={!canCreateDraft}
-            >
-              {createDraftLabel}
-            </button>
-            <button
-              className="btn btn-ghost"
+              type="button"
+              className="attachment-card__download"
               onClick={downloadEconsent}
               disabled={!canDownload}
+              aria-label="Download Econsent.pdf"
             >
-              Download Econsent.pdf
+              <Download size={15} aria-hidden="true" />
+              Download
             </button>
           </div>
-          <div className="draft-controls__result" aria-live="polite">
+
+          <button
+            type="button"
+            className="btn btn-primary create-draft-button"
+            onClick={handleCreateDraft}
+            disabled={!canCreateDraft}
+          >
+            <Send size={17} aria-hidden="true" />
+            {createDraftLabel}
+          </button>
+
+          <div className="draft-result" aria-live="polite">
             {draftLinks.map(link => (
-              <a
-                key={link.label}
-                href={link.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="draft-controls__link"
-              >
+              <a key={link.label} href={link.url} target="_blank" rel="noopener noreferrer">
                 {link.label}
               </a>
             ))}
-            {draftState === 'error' && (
-              <p style={{ fontSize: '0.82rem', color: 'var(--color-error)', margin: 0 }}>{draftError}</p>
-            )}
+            {draftState === 'error' && <p className="draft-error">{draftError}</p>}
           </div>
-        </div>
-      </div>
 
-      <div className="card">
-        <p className="section-label">
-          Email Preview
-          <span style={{ fontWeight: 400, textTransform: 'none', letterSpacing: 0, marginLeft: '0.5rem', color: 'var(--color-text-muted)', fontSize: '0.75rem' }}>
-            — click to edit
-          </span>
-        </p>
-        <div
-          ref={emailRef}
-          contentEditable={!isDraftCreating}
-          suppressContentEditableWarning
-          className="email-preview"
-          onBlur={handleEmailBlur}
-        />
+          <p className="draft-safety-note">
+            <ShieldCheck size={20} aria-hidden="true" />
+            <span>Creates a draft only — nothing is sent automatically.</span>
+          </p>
+        </aside>
       </div>
     </div>
   );

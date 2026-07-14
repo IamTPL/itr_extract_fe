@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react';
+import { LoaderCircle, Plus } from 'lucide-react';
 import { ApiError } from '../lib/apiClient';
 import { MAX_FILE_SIZE_BYTES } from '../lib/constants';
 
@@ -39,45 +40,43 @@ export function UploadCard({ onUpload }: { onUpload: (file: File) => Promise<voi
     }
   };
 
-  const zoneClass = [
-    'upload-zone',
-    dragOver ? 'upload-zone--drag-over' : '',
-    busy ? 'upload-zone--busy' : '',
-  ].filter(Boolean).join(' ');
-
   return (
-    <section>
-      <div
-        className={zoneClass}
-        onClick={() => { if (!busy) inputRef.current?.click(); }}
-        onDragOver={e => { e.preventDefault(); setDragOver(true); }}
-        onDragLeave={() => setDragOver(false)}
-        onDrop={e => {
-          e.preventDefault();
-          setDragOver(false);
-          const file = e.dataTransfer.files[0];
-          if (file && !busy) handle(file);
-        }}
+    <section
+      className={`sidebar-upload${dragOver ? ' sidebar-upload--drag-over' : ''}`}
+      aria-label="PDF upload"
+      onDragOver={event => {
+        event.preventDefault();
+        if (!busy) setDragOver(true);
+      }}
+      onDragLeave={() => setDragOver(false)}
+      onDrop={event => {
+        event.preventDefault();
+        setDragOver(false);
+        const file = event.dataTransfer.files[0];
+        if (file && !busy) handle(file);
+      }}
+    >
+      <button
+        type="button"
+        className="btn btn-primary sidebar-upload__button"
+        onClick={() => inputRef.current?.click()}
+        disabled={busy}
       >
-        <div className="upload-zone__icon">↑</div>
-        {busy ? (
-          <p className="upload-zone__label">Uploading…</p>
-        ) : (
-          <>
-            <p className="upload-zone__label">Drop PDF here or click to browse</p>
-            <p className="upload-zone__hint">Max {MAX_MB} MB · PDF only</p>
-          </>
-        )}
-        <input
-          ref={inputRef}
-          type="file"
-          accept="application/pdf"
-          disabled={busy}
-          onChange={e => e.target.files?.[0] && handle(e.target.files[0])}
-          style={{ display: 'none' }}
-        />
-      </div>
-      {error && <p className="upload-error">{error}</p>}
+        {busy
+          ? <LoaderCircle className="spin" size={17} aria-hidden="true" />
+          : <Plus size={17} aria-hidden="true" />}
+        {busy ? 'Processing PDF…' : 'Process New PDF'}
+      </button>
+      <input
+        ref={inputRef}
+        type="file"
+        accept="application/pdf,.pdf"
+        aria-label="Select PDF to process"
+        disabled={busy}
+        onChange={e => e.target.files?.[0] && handle(e.target.files[0])}
+        hidden
+      />
+      {error && <p className="upload-error" role="alert">{error}</p>}
     </section>
   );
 }

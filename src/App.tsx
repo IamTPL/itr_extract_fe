@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useIsAuthenticated, useMsal } from '@azure/msal-react';
-import { UploadCard } from './components/UploadCard';
+import { FileSearch, LogOut, UserRound } from 'lucide-react';
 import { JobHistory } from './components/JobHistory';
 import { JobDetailView } from './components/JobDetailView';
 import { JobStatusBadge } from './components/JobStatusBadge';
@@ -56,6 +56,11 @@ function AuthenticatedApp() {
     window.location.reload();
   }
 
+  async function handleUpload(file: File) {
+    const r = await createJob(file);
+    setSelected(r.job_id);
+  }
+
   return (
     <div className="app-shell">
       <JobHistory
@@ -74,33 +79,43 @@ function AuthenticatedApp() {
             if (selected === id) setSelected(null);
           } catch { /* toast already shown */ }
         }}
+        onUpload={handleUpload}
       />
       <div className="main">
         <header className="header">
-          <span className="header__username">{userName}</span>
-          <button className="btn btn-ghost" onClick={handleLogout}>Sign out</button>
+          <div className="header__identity">
+            <span className="header__avatar" aria-hidden="true"><UserRound size={17} /></span>
+            <span className="header__username">{userName}</span>
+          </div>
+          <button className="btn btn-ghost header__logout" onClick={handleLogout}>
+            <LogOut size={15} aria-hidden="true" />
+            Sign out
+          </button>
         </header>
         <div className="content">
-          <UploadCard onUpload={async (file) => {
-            const r = await createJob(file);
-            setSelected(r.job_id);
-          }} />
+          {!selected && (
+            <div className="empty-workspace">
+              <span className="empty-workspace__icon" aria-hidden="true"><FileSearch size={27} /></span>
+              <h1>Select a client return</h1>
+              <p>Choose a processed PDF from the left, or process a new return to begin.</p>
+            </div>
+          )}
 
           {isPending && job && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem' }}>
+            <div className="job-state-banner">
               <JobStatusBadge status={job.status} />
-              <span style={{ color: 'var(--color-text-secondary)', fontSize: '0.9rem' }}>{job.original_filename}</span>
+              <span>{job.original_filename}</span>
             </div>
           )}
 
           {job?.status === JobStatus.FAILED && (
-            <div style={{ marginBottom: '1rem', color: 'var(--color-error)', fontSize: '0.88rem' }}>
+            <div className="job-state-banner job-state-banner--error">
               Failed: {job.error_message}
             </div>
           )}
 
           {timedOut && (
-            <div style={{ marginBottom: '1rem', fontSize: '0.88rem', color: 'var(--color-text-secondary)' }}>
+            <div className="job-state-banner">
               Processing is taking a while.{' '}
               <button className="btn btn-ghost" onClick={() => setPollingKey(k => k + 1)}>
                 Refresh to check
