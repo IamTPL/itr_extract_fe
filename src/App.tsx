@@ -31,20 +31,19 @@ function LoginGate({ onLogin }: { onLogin: () => void }) {
 
 function AuthenticatedApp() {
   const { instance, accounts } = useMsal();
-  const { jobs, refresh, createJob, reprocess, deleteJob } = useJobs();
   const [selected, setSelected] = useState<string | null>(null);
+  const { jobs, patchJob, createJob, reprocess, deleteJob } = useJobs(selected);
   const [pollingKey, setPollingKey] = useState(0);
   const { job, timedOut } = useJobPolling(selected, pollingKey);
 
   const isPending = job?.status === JobStatus.PENDING || job?.status === JobStatus.PROCESSING;
   const userName = accounts[0]?.name ?? accounts[0]?.username ?? 'User';
 
-  // Poll detail của selected job, nhưng sidebar list (`jobs`) vẫn là snapshot cũ
-  // (chỉ refresh sau create/reprocess/delete). Khi polled job đổi status →
-  // refresh sidebar để badge khớp với trạng thái thật.
+  // Detail polling là source mới nhất cho selected job. Patch local tránh gọi lại
+  // toàn bộ list; useJobs chỉ list-poll các active jobs không được chọn.
   useEffect(() => {
-    if (job?.status) refresh();
-  }, [job?.job_id, job?.status, refresh]);
+    if (job) patchJob(job);
+  }, [job, patchJob]);
 
   async function handleLogout() {
     // App-only logout: clear MSAL cache local (sessionStorage + tokens) NHƯNG
