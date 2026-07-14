@@ -108,7 +108,7 @@ function AuthenticatedApp() {
             </div>
           )}
 
-          {job?.status === JobStatus.SUCCESS && <JobDetailView job={job} />}
+          {job?.status === JobStatus.SUCCESS && <JobDetailView key={job.job_id} job={job} />}
         </div>
       </div>
     </div>
