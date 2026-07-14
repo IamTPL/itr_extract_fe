@@ -362,7 +362,9 @@ export function JobDetailView({ job }: { job: JobDetail }) {
     !!toEmail.trim()
     && !isAttachmentBusy
     && !isDraftCreating
-    && (!hasEconsentForms || !!econsentB64)
+    && (draftMode === 'combined'
+      ? selectedForms.size === 0 || !!econsentB64
+      : !!econsentB64)
   );
   const canDownload = !!econsentB64 && !isAttachmentBusy;
   const createDraftLabel = isDraftCreating
@@ -414,8 +416,8 @@ export function JobDetailView({ job }: { job: JobDetail }) {
             <p style={{ margin: '0.75rem 0 0', fontSize: '0.85rem', color: 'var(--color-text-secondary)' }}>Loading Econsent.pdf…</p>
           )}
           {!isAttachmentBusy && selectedForms.size === 0 && (
-            <p style={{ margin: '0.75rem 0 0', fontSize: '0.85rem', color: 'var(--color-error)' }}>
-              Select at least one form before creating an Outlook draft.
+            <p style={{ margin: '0.75rem 0 0', fontSize: '0.85rem', color: 'var(--color-text-secondary)' }}>
+              No E-consent forms selected — the draft will contain the summary email only.
             </p>
           )}
         </div>
@@ -460,7 +462,7 @@ export function JobDetailView({ job }: { job: JobDetail }) {
                       ? 'Summary + Econsent.pdf attachment'
                       : selectedForms.size > 0
                         ? 'Econsent.pdf is unavailable'
-                        : 'Select at least one E-consent form'}
+                        : 'Summary only — no E-consent selected'}
                 </small>
               </span>
             </label>
