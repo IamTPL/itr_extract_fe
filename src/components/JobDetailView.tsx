@@ -19,8 +19,8 @@ import {
   Underline,
   Undo2,
 } from 'lucide-react';
-import type { JobDetail } from '../lib/types';
-import { createOutlookDraft } from '../lib/graphApi';
+import type { JobDetail, VoucherForm } from '../lib/types';
+import { createOutlookDraft, type EmailAttachment } from '../lib/graphApi';
 import { apiFetch } from '../lib/apiClient';
 import { useToast } from '../lib/toast';
 import { useAccessToken } from '../hooks/useAccessToken';
@@ -46,6 +46,7 @@ interface AnalysisData {
   tax_year?: string;
   return_type?: string;
   econsent_forms?: EconsentForm[];
+  voucher_forms?: VoucherForm[];
 }
 
 const EMAIL_EDIT_KEY_PREFIX = 'itr.email_edit.';
@@ -83,6 +84,22 @@ function formatProcessedDate(value: string | null): string {
     day: 'numeric',
     year: 'numeric',
   }).format(new Date(value));
+}
+
+function formatVoucherAmount(amount: number): string {
+  return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(amount);
+}
+
+// Export riêng cho unit test (formatVoucherDueDate là helper thuần, không phải component).
+// eslint-disable-next-line react-refresh/only-export-components
+export function formatVoucherDueDate(value: string): string | null {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return new Intl.DateTimeFormat('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  }).format(date);
 }
 
 function escapeRegExp(value: string): string {
@@ -190,6 +207,7 @@ export function JobDetailView({ job }: { job: JobDetail }) {
 
   const analysisData = (job.analysis_data ?? {}) as AnalysisData;
   const forms = analysisData?.econsent_forms ?? [];
+  const voucherForms = analysisData?.voucher_forms ?? [];
 
   const emailRef = useRef<HTMLDivElement>(null);
   const editorSelectionRef = useRef<Range | null>(null);
@@ -203,6 +221,16 @@ export function JobDetailView({ job }: { job: JobDetail }) {
     () => job.has_econsent && forms.length > 0,
   );
   const [isExtracting, setIsExtracting] = useState(false);
+
+  const [selectedVoucherForms, setSelectedVoucherForms] = useState<Set<number>>(
+    () => new Set(voucherForms.map((_, i) => i)),
+  );
+  const [voucherB64, setVoucherB64] = useState<string | null>(null);
+  const [isVoucherLoading, setIsVoucherLoading] = useState(
+    () => job.has_voucher && voucherForms.length > 0,
+  );
+  const [isVoucherExtracting, setIsVoucherExtracting] = useState(false);
+  const [attachVoucher, setAttachVoucher] = useState(false);
 
   const [toEmail, setToEmail] = useState('');
   const [draftMode, setDraftMode] = useState<DraftMode>('combined');
@@ -242,6 +270,28 @@ export function JobDetailView({ job }: { job: JobDetail }) {
       })
       .finally(() => {
         if (!cancelled) setIsEconsentLoading(false);
+      });
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [job.job_id]);
+
+  useEffect(() => {
+    if (!job.has_voucher || voucherForms.length === 0) return;
+    let cancelled = false;
+    apiFetch(`/api/jobs/${job.job_id}/voucher.pdf`, {}, getToken)
+      .then(r => r.arrayBuffer())
+      .then(buf => {
+        if (cancelled) return;
+        let binary = '';
+        new Uint8Array(buf).forEach(b => (binary += String.fromCharCode(b)));
+        setVoucherB64(btoa(binary));
+      })
+      .catch(err => {
+        if (cancelled) return;
+        toast.show(`Failed to load voucher PDF: ${err instanceof Error ? err.message : 'Unknown error'}`);
+      })
+      .finally(() => {
+        if (!cancelled) setIsVoucherLoading(false);
       });
     return () => { cancelled = true; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -290,6 +340,35 @@ export function JobDetailView({ job }: { job: JobDetail }) {
     }
   }
 
+  async function handleVoucherFormToggle(idx: number) {
+    const next = new Set(selectedVoucherForms);
+    if (next.has(idx)) next.delete(idx); else next.add(idx);
+    setSelectedVoucherForms(next);
+    setDraftState('idle');
+    setDraftError('');
+    if (!retryMissingEconsent) setDraftLinks([]);
+    if (next.size === 0) {
+      setVoucherB64(null);
+      setAttachVoucher(false);
+      return;
+    }
+    setVoucherB64(null);
+    setIsVoucherExtracting(true);
+    const selectedPages = voucherForms
+      .filter((_, i) => next.has(i))
+      .flatMap(f => f.pages)
+      .sort((a, b) => a - b);
+    try {
+      const buf = await getInputBuffer();
+      const b64 = await extractPagesFromBuffer(buf, selectedPages);
+      setVoucherB64(b64);
+    } catch (err) {
+      toast.show(`Failed to rebuild Voucher.pdf: ${err instanceof Error ? err.message : 'Unknown error'}`);
+    } finally {
+      setIsVoucherExtracting(false);
+    }
+  }
+
   async function handleCreateDraft() {
     if (!toEmailRef.current?.reportValidity()) return;
     const recipient = toEmail.trim();
@@ -306,6 +385,10 @@ export function JobDetailView({ job }: { job: JobDetail }) {
     const summarySubject = `${taxYear} Income Tax Return — ${clientName}`;
     const econsentSubject = `${taxYear} E-file Authorization Forms — ${clientName}`;
     const fileName = 'Econsent.pdf';
+    const voucherFileName = 'Voucher.pdf';
+    const voucherAttachment: EmailAttachment[] = attachVoucher && voucherB64
+      ? [{ name: voucherFileName, contentBytes: voucherB64 }]
+      : [];
     const createdLinks: DraftLink[] = isEconsentRetry ? [...draftLinks] : [];
     let summaryDraftCreated = isEconsentRetry;
     try {
@@ -313,13 +396,16 @@ export function JobDetailView({ job }: { job: JobDetail }) {
         const combinedHtml = econsentB64
           ? withEconsentNotice(currentHtml, ATTACHED_ECONSENT_NOTICE)
           : currentHtml;
+        const attachments: EmailAttachment[] = [
+          ...(econsentB64 ? [{ name: fileName, contentBytes: econsentB64 }] : []),
+          ...voucherAttachment,
+        ];
         const draft = await createOutlookDraft(
           instance,
           recipient,
           summarySubject,
           combinedHtml,
-          econsentB64,
-          fileName,
+          attachments,
         );
         if (draft.webLink) createdLinks.push({ label: 'Open draft in Outlook', url: draft.webLink });
       } else {
@@ -329,8 +415,7 @@ export function JobDetailView({ job }: { job: JobDetail }) {
             recipient,
             summarySubject,
             withEconsentNotice(currentHtml, SEPARATE_ECONSENT_NOTICE),
-            null,
-            fileName,
+            voucherAttachment,
           );
           summaryDraftCreated = true;
           if (summaryDraft.webLink) {
@@ -339,13 +424,13 @@ export function JobDetailView({ job }: { job: JobDetail }) {
           }
         }
 
+        const econsentAttachments: EmailAttachment[] = econsentB64 ? [{ name: fileName, contentBytes: econsentB64 }] : [];
         const econsentDraft = await createOutlookDraft(
           instance,
           recipient,
           econsentSubject,
           buildEconsentEmailHtml(taxYear),
-          econsentB64,
-          fileName,
+          econsentAttachments,
         );
         if (econsentDraft.webLink) {
           createdLinks.push({ label: 'Open E-consent draft', url: econsentDraft.webLink });
@@ -436,23 +521,44 @@ export function JobDetailView({ job }: { job: JobDetail }) {
     URL.revokeObjectURL(url);
   }
 
+  function downloadVoucher() {
+    if (!voucherB64) return;
+    const bytes = atob(voucherB64);
+    const arr = new Uint8Array(bytes.length);
+    for (let i = 0; i < bytes.length; i++) arr[i] = bytes.charCodeAt(i);
+    const url = URL.createObjectURL(new Blob([arr], { type: 'application/pdf' }));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'Voucher.pdf';
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
   const isAttachmentBusy = isExtracting || isEconsentLoading;
+  const isVoucherAttachmentBusy = isVoucherExtracting || isVoucherLoading;
   const isDraftCreating = draftState === 'creating';
   const isFormSelectionDisabled = isAttachmentBusy || isDraftCreating;
+  const isVoucherFormSelectionDisabled = isVoucherAttachmentBusy || isDraftCreating;
   const hasEconsentForms = forms.length > 0;
   const selectedPageCount = new Set(
     forms.filter((_, index) => selectedForms.has(index)).flatMap(form => form.pages),
+  ).size;
+  const selectedVoucherPageCount = new Set(
+    voucherForms.filter((_, index) => selectedVoucherForms.has(index)).flatMap(form => form.pages),
   ).size;
   const processedDate = formatProcessedDate(job.finished_at);
   const canCreateDraft = (
     !!toEmail.trim()
     && !isAttachmentBusy
+    && !isVoucherAttachmentBusy
     && !isDraftCreating
     && (draftMode === 'combined'
       ? selectedForms.size === 0 || !!econsentB64
       : !!econsentB64)
+    && (!attachVoucher || !!voucherB64)
   );
   const canDownload = !!econsentB64 && !isAttachmentBusy;
+  const canDownloadVoucher = !!voucherB64 && !isVoucherAttachmentBusy;
   const createDraftLabel = isDraftCreating
     ? retryMissingEconsent
       ? 'Creating E-consent draft…'
@@ -462,6 +568,29 @@ export function JobDetailView({ job }: { job: JobDetail }) {
     : draftState === 'done'
       ? draftMode === 'separate' ? '2 Drafts Created' : 'Draft Created'
       : draftMode === 'separate' ? 'Create 2 Outlook Drafts' : 'Create Outlook Draft';
+
+  const voucherAttachOption = job.has_voucher ? (
+    <label className={`draft-option ${attachVoucher ? 'draft-option--selected' : ''}`}>
+      <input
+        type="checkbox"
+        checked={attachVoucher}
+        onChange={() => { setAttachVoucher(prev => !prev); resetDraftResult(); }}
+        disabled={isDraftCreating || isVoucherAttachmentBusy || !voucherB64}
+      />
+      <span>
+        <strong>Attach Voucher.pdf</strong>
+        <small>
+          {isVoucherAttachmentBusy
+            ? 'Preparing Voucher.pdf…'
+            : !voucherB64
+              ? 'Voucher.pdf is unavailable'
+              : attachVoucher
+                ? draftMode === 'separate' ? 'Attached to the Summary email' : 'Attached to this email'
+                : 'Not attached'}
+        </small>
+      </span>
+    </label>
+  ) : null;
 
   return (
     <div className="return-workspace">
@@ -620,12 +749,21 @@ export function JobDetailView({ job }: { job: JobDetail }) {
                     <small>Separate summary and E-consent drafts</small>
                   </span>
                 </label>
+                {voucherAttachOption}
               </div>
             </fieldset>
           ) : (
             <div className="delivery-summary">
               <span>Delivery</span>
               <strong>One summary email</strong>
+            </div>
+          )}
+
+          {!hasEconsentForms && job.has_voucher && (
+            <div className="delivery-fieldset">
+              <div className="draft-options">
+                {voucherAttachOption}
+              </div>
             </div>
           )}
 
@@ -697,6 +835,90 @@ export function JobDetailView({ job }: { job: JobDetail }) {
               Download
             </button>
           </div>
+
+          {job.has_voucher && (
+            <>
+              <div className="prepare-section">
+                <div className="prepare-section__heading">
+                  <h3>Payment Vouchers</h3>
+                  <span className="selection-count">{selectedVoucherForms.size} / {voucherForms.length} selected</span>
+                </div>
+
+                {voucherForms.length > 0 ? (
+                  <div className="econsent-list">
+                    {voucherForms.map((form, index) => {
+                      const dueDateLabel = form.due_date != null ? formatVoucherDueDate(form.due_date) : null;
+                      return (
+                        <label
+                          key={`${form.form_number}-${index}`}
+                          className={`econsent-row ${selectedVoucherForms.has(index) ? 'econsent-row--selected' : ''}`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={selectedVoucherForms.has(index)}
+                            onChange={() => handleVoucherFormToggle(index)}
+                            disabled={isVoucherFormSelectionDisabled}
+                          />
+                          <span className="econsent-row__content">
+                            <span className="econsent-row__topline">
+                              <strong>Form {form.form_number}</strong>
+                              <span className="jurisdiction-badge">{form.jurisdiction}</span>
+                            </span>
+                            <span className="econsent-row__title">{form.title}</span>
+                            <span className="econsent-row__pages">
+                              {form.pages.length === 1 ? 'Page' : 'Pages'} {form.pages.join(', ')}
+                            </span>
+                            {(form.amount != null || dueDateLabel != null) && (
+                              <span className="econsent-row__pages">
+                                {[
+                                  form.amount != null ? formatVoucherAmount(form.amount) : null,
+                                  dueDateLabel != null ? `Due ${dueDateLabel}` : null,
+                                ].filter(Boolean).join(' • ')}
+                              </span>
+                            )}
+                          </span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <p className="empty-section-copy">No payment vouchers were detected for this return.</p>
+                )}
+
+                {isVoucherExtracting && <p className="inline-status">Rebuilding Voucher.pdf…</p>}
+                {isVoucherLoading && <p className="inline-status">Loading Voucher.pdf…</p>}
+                {!isVoucherAttachmentBusy && voucherForms.length > 0 && selectedVoucherForms.size === 0 && (
+                  <p className="inline-status inline-status--notice">
+                    No forms selected. Voucher.pdf will not be available.
+                  </p>
+                )}
+              </div>
+
+              <div className={`attachment-card ${voucherB64 ? 'attachment-card--ready' : ''}`}>
+                <div className="attachment-card__icon"><FileText size={18} aria-hidden="true" /></div>
+                <div className="attachment-card__details">
+                  <strong>{voucherB64 ? 'Voucher.pdf' : 'No attachment'}</strong>
+                  <span>
+                    {isVoucherAttachmentBusy
+                      ? 'Preparing PDF…'
+                      : voucherB64
+                        ? `${selectedVoucherPageCount} ${selectedVoucherPageCount === 1 ? 'page' : 'pages'} • Ready`
+                        : 'Select a form to include Voucher'}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  className="attachment-card__download"
+                  onClick={downloadVoucher}
+                  disabled={!canDownloadVoucher}
+                  aria-label="Download Voucher.pdf"
+                >
+                  <Download size={15} aria-hidden="true" />
+                  Download
+                </button>
+              </div>
+            </>
+          )}
 
           <button
             type="button"

@@ -8,13 +8,17 @@ export interface DraftResult {
   webLink: string;
 }
 
+export interface EmailAttachment {
+  name: string;
+  contentBytes: string;
+}
+
 export async function createOutlookDraft(
   msalInstance: IPublicClientApplication,
   toEmail: string,
   subject: string,
   bodyHtml: string,
-  econsentB64: string | null,
-  econsentFileName: string,
+  attachments: EmailAttachment[],
 ): Promise<DraftResult> {
   const account = msalInstance.getAllAccounts()[0];
 
@@ -37,14 +41,12 @@ export async function createOutlookDraft(
       subject,
       body: { contentType: 'HTML', content: bodyHtml },
       toRecipients: [{ emailAddress: { address: toEmail } }],
-      attachments: econsentB64 ? [
-        {
-          '@odata.type': '#microsoft.graph.fileAttachment',
-          name: econsentFileName,
-          contentType: 'application/pdf',
-          contentBytes: econsentB64,
-        },
-      ] : [],
+      attachments: attachments.map(attachment => ({
+        '@odata.type': '#microsoft.graph.fileAttachment',
+        name: attachment.name,
+        contentType: 'application/pdf',
+        contentBytes: attachment.contentBytes,
+      })),
     }),
   });
 
